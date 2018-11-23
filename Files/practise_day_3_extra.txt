@@ -1,0 +1,77 @@
+
+## Inference of population splits and gene flow from allele frequencies using Treemix software (https://code.google.com/p/treemix/)
+## This method is described in: http://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1002967
+
+# Make sure you have a "Results" folder in your current directory and "treemix" installed
+
+# You should be in your Work/ folder.
+
+# Path to where TreeMix has been installed
+TREEMIX=~/Documents/Software/treemix-1.12
+
+# 1) Convert the data into readable file format
+
+gzip -c ../Data/hapmap.frq.strat > Results/hapmap.frq.strat.gz
+# download plink2treemix.py into treemix folder
+python $TREEMIX/plink2treemix.py Results/hapmap.frq.strat.gz Results/hapmap.frq.strat.treemix.gz
+
+# in case you do not have "gzip" or "python" copy the final file from ../Data
+# cp ../Data/hapmap.frq.strat.treemix.gz Results/.
+
+# 2) Infer the genetic strcuture assuming with no migration
+
+# we use a parameter -k to take into account non-independence of sites
+
+$TREEMIX/src/treemix -i Results/hapmap.frq.strat.treemix.gz -o Results/treemix.tree -root YRI -k 10 > Results/treemix.out
+tail -n 2 Results/treemix.out | head -n 1 > Results/treemix.nwk
+
+# quickly plot the tree using SeaView
+# ~/Documents/Software/seaview4/seaview.app/Contents/MacOS/seaview Results/treemix.nwk
+
+# plot the tree with residuals using the function plotTreemix.R [Treemix directory] [output file root]
+Rscript ../Scripts/plotTreemix.R $TREEMIX Results/treemix.tree
+# this script will create a PDF figure
+# ls Results/*.pdf
+# open Results/treemix.tree.pdf
+# evince Results/treemix.tree.pdf
+
+# 3) Assume 1 migration event
+
+$TREEMIX/src/treemix -i Results/hapmap.frq.strat.treemix.gz -o Results/treemix.tree -root YRI -m 1 -k 10
+
+# plot
+Rscript ../Scripts/plotTreemix.R $TREEMIX Results/treemix.tree
+
+# open Results/treemix.tree.pdf
+# evince Results/treemix.tree.pdf
+
+# 4) Run it multiple times (recording the most likely one) and vary number of mixture events
+
+# for instance, run it 100 runs and with -m={0-2}
+
+for K in {1..100};
+
+        do $TREEMIX/src/treemix -i Results/hapmap.frq.strat.treemix.gz -o Results/hapmap.frq.strat.tree.0.${K} -root YRI -k 10;
+
+        $TREEMIX/src/treemix -i Results/hapmap.frq.strat.treemix.gz -o Results/hapmap.frq.strat.tree.1.${K} -root YRI -m 1 -k 10;
+
+        $TREEMIX/src/treemix -i Results/hapmap.frq.strat.treemix.gz -o Results/hapmap.frq.strat.tree.2.${K} -root YRI -m 2 -k 10;
+done
+
+# record likelihood values for all repetitions
+
+tail -n 1 Results/hapmap.frq.strat.tree.*.*.llik | cut -d \: -f 2 > Results/treemix.likes
+
+# plot
+
+Rscript Scripts/plotTreemix_multi.R $TREEMIX Results/treemix.likes
+
+# ls Results/treemix.*
+# treemix.m0.FULL.pdf  treemix.m0.pdf       treemix.m1.FULL.pdf  treemix.m1.pdf       treemix.m2.FULL.pdf  treemix.m2.pdf       treemix.tree.pdf
+
+# open these plots.
+
+# QUESTION
+# How many gene flow events do we need to explain our data?
+
+

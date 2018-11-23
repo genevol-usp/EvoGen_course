@@ -1,0 +1,142 @@
+
+Solutions for the proposed exercises are provided below.
+
+Please be aware that these commands are a pure indication and some modifications (e.g. path to software) are required to run them on the provided files.
+
+** SNP calling
+
+Possible solution for SNP calling by varying the cutoff, using the butterfly dataset
+<src>
+# run ANGSD to get the required files
+./angsd/angsd -b input/lycaeides.files_list -GL 2 -doMajorMinor 2 -doMaf 1 \
+-minMaf 0.05 -doCounts 1 -out output/lyca
+# iterate over some cutoffs
+for PV in 0.1 0.05 0.01 1e-3 1e-4
+do
+if [ $PV == 0.1 ]; then echo SNP_pval NR_SNPs; fi
+./angsd/angsd -b input/lycaeides.files_list -GL 1 -doMajorMinor 1 -doMaf 2 \
+-SNP_pval $PV -out output/lyca.$PV &> /dev/null
+echo $PV `gunzip -c output/lyca.$PV.mafs.gz | tail -n+2 | wc -l`
+done
+# This should be the output
+#SNP_pval NR_SNPs
+#0.1 14134
+#0.05 12514
+#0.01 9003
+#1e-3 5979
+#1e-4 4607
+# Which sites differ between 0.05 and 0.01? how about their allele frequencies?
+# You can use a simple R script to print the first 20 sites
+Rscript -e 'mafs1=read.table(gzfile("output/lyca.0.01.mafs.gz"), he=T, strings=F); \ 
+mafs5=read.table(gzfile("output/lyca.0.05.mafs.gz"), header=T, stringsAsFact=F); \
+mafs5[!(mafs5[,2] %in% mafs1[,2]),][1:20,]'
+# or you can use awk
+awk 'NR==FNR{a[$0];next} !($0 in a) {print $0}' output/pos1.txt output/pos5.txt \
+ | head -n 20
+# or whatever you prefer; 
+# to plot their allele frequencies you can use R
+awk 'NR==FNR{a[$0];next} !($0 in a) {print $0}' output/pos1.txt output/pos5.txt \
+ | cut -f 5 | Rscript -e 'f=file("stdin");open(f);pdf(file="output/diff_snps.pdf");\
+hist(as.numeric(readLines(f)),main="Discordant SNPs",xlab="MAF");dev.off();close(f)'
+open output/diff_snps.pdf" # on mac
+
+</src>
+
+** SFS estimation
+
+Possible solution of SFS estimation using the butterfly dataset
+<src>
+# get required files using R
+./angsd/angsd -b input/lyca/bams.list -ref input/lyca/referenceseq.fasta -GL 1 \
+-doMaf 2 -doMajorMinor 4 -SNP_pval 0.1 -doGeno 2 -doPost 1 -out output/lyca.angsd.v1
+./angsd/angsd -b input/lyca/bams.list -ref input/lyca/referenceseq.fasta -GL 1 \
+-doMaf 2 -doMajorMinor 4 -SNP_pval 0.01 -doGeno 2 -doPost 1 -out output/lyca.angsd.v2
+./angsd/angsd -b input/lyca/bams.list -ref input/lyca/referenceseq.fasta -GL 1 \
+-doMaf 2 -doMajorMinor 4 -SNP_pval 1e-3 -doGeno 2 -doPost 1 -out output/lyca.angsd.v3
+./angsd/angsd -b input/lyca/bams.list -ref input/lyca/referenceseq.fasta -GL 1 \
+-doMaf 2 -doMajorMinor 4 -SNP_pval 1e-4 -doGeno 2 -doPost 1 -out output/lyca.angsd.v4
+# open R
+getSFS <-function(x){
+  a<-read.table(x)[,-c(1:2)]
+  ns=ncol(a)
+  a[a==-1] <- NA;
+  tot=as.numeric(table(rowSums(a,na.rm=T)))
+  tot/sum(tot)
+}
+# again do not type the \ symbol which is only for formatting
+sfs=rbind(getSFS("output/lyca.angsd.v1.geno.gz"),getSFS("output/lyca.angsd.v2.geno.gz"),\
+getSFS("output/lyca.angsd.v3.geno.gz"),getSFS("output/lyca.angsd.v4.geno.gz"))
+# let's merge the previous Maximum Likelihood Estimate of SFS
+mle=as.numeric(scan("output/lyca.sfs",quiet=T));
+mle=exp(mle[2:41])/sum(exp(mle[2:41]));
+sfs=rbind(sfs, mle)
+# plot
+par(mfrow(2,1))
+barplot(sfs, beside=T, legend=c(0.1,0.01,1e-3,1e-4,"MLE"))
+# we can zoom
+barplot(sfs[,1:6], beside=T, legend=c(0.1,0.01,1e-3,1e-4,"MLE"))
+# close R
+# We can also use SAMtools, by tuning the option -p in bcftools
+for i in 1 0.5 0.1 0.01; do ./samtools-0.1.19/samtools mpileup \
+-f input/lyca/referenceseq.fasta -b input/lyca/bams.list -g -I | \
+./samtools-0.1.19/bcftools/bcftools view -cg -v -p $i - > \
+output/lyca.sam.vcf; ./vcftools_0.1.11/bin/vcftools \
+--vcf output/lyca.sam.vcf --012 --out output/lyca.sam.$i.geno; \
+done
+# open R
+getSFS <-function(x){
+  a<-read.table(x)[,-1]
+  a[a==-1] <- NA;  
+  tb=table(colSums(a,na.rm=T))
+  ns=nrow(a)
+  val=rep(NA,(2*ns)+1)
+  val=as.numeric(tb)[match(0:40, as.numeric(names(tb)))]
+  val[-1]/sum(val[-1])
+}
+sfs=rbind(getSFS("output/lyca.sam.1.geno.012"),\
+getSFS("output/lyca.sam.0.5.geno.012"),getSFS("output/lyca.sam.0.1.geno.012"),\
+getSFS("output/lyca.sam.0.01.geno.012"))
+# let's merge the previous Maximum Likelihood Estimate of SFS
+mle=as.numeric(scan("output/lyca.sfs",quiet=T));
+mle=exp(mle[2:41])/sum(exp(mle[2:41]));
+sfs=rbind(sfs, mle)
+# plot
+par(mfrow=c(2,1))
+barplot(sfs, beside=T, legend=c(1,0.5,0.1,0.01,"MLE"))
+# we can zoom
+barplot(sfs[,1:6], beside=T, legend=c(1,0.5,0.1,0.01,"MLE"))
+# close R
+
+</src>
+
+** Low-depth data
+
+Possible solution using the butterfly dataset
+<src>
+
+# get required files using ANGSD
+./angsd/angsd -bam input/lyca/bams.list -GL 1 -doMaf 2 -doSaf 1 \
+-anc input/lyca/referenceseq.fasta -doMajorMinor 5 -out output/human.lyca
+./angsd/misc/emOptim2 output/lyca.saf 40 -P 2 > output/lyca.sfs
+./angsd/angsd -bam input/lyca/bams.list -anc input/lyca/referenceseq.fasta \
+-out output/lyca -doThetas 1 -doSaf 1 -GL 1 -doMaf 2 -doMajorMinor 5 -pest output/lyca.sfs
+# compute summary statistics
+./angsd/misc/thetaStat make_bed output/lyca.thetas.gz
+./angsd/misc/thetaStat do_stat output/lyca.thetas.gz -nChr 40 -win 10000 -step 5000
+cut -f 3,9,10,11 output/lyca.thetas.gz.pestPG > output/lyca.stats
+# plot
+# again \ symbol may give an error, do not copy it
+Rscript -e 'pdf(file="output/lyca.stats.pdf");\
+res=read.table("output/lyca.stats",stringsAsFac=F); \
+yl=c(min(res[,2:4]),max(res[,2:4])); \
+plot(x=res[,1],y=res[,2],main="Summary Statistics",ylab="Value",\
+xlab="Position",ylim=yl,ty="l",col="black"); \
+lines(x=res[,1],y=res[,3],col="red");\
+lines(x=res[,1],y=res[,4],col="blue");dev.off()'
+
+open output/lyca.stats.pdf
+</src>
+
+
+
+
